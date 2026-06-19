@@ -1,4 +1,5 @@
 import streamlit as st
+import os
 # ... TODO 8: pindahkan fungsi pipeline ke sini & buat UI chat ...
 # Import pandas untuk data tabel
 import pandas as pd
