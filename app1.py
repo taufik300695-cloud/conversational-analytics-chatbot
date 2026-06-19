@@ -1,50 +1,52 @@
-import streamlit as st
 import os
-# ... TODO 8: pindahkan fungsi pipeline ke sini & buat UI chat ...
-# Import pandas untuk data tabel
+import re
 import pandas as pd
-# Import client Gemini
+import streamlit as st
 from google import genai
-# Import 'types' untuk konfigurasi (system prompt, temperature)
-from google.genai import types
+from sqlalchemy import create_engine, text
 
-# Judul & caption halaman
-st.title("Mini Project Use Case C: Chatbot Analitik PLN - Aset Gangguan")
-st.caption("Conversational Analytics - Streamlit Community Cloud")
 # ======================
 # 1. Konfigurasi
 # ======================
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+st.set_page_config(page_title="Chatbot Aset & Gangguan", page_icon="⚡")
+
+GOOGLE_API_KEY = st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY"))
+DB_URL = st.secrets.get("DB_URL", os.getenv("DB_URL"))
 
 if not GOOGLE_API_KEY:
-    st.error("GOOGLE_API_KEY belum ditemukan.")
+    st.error("GOOGLE_API_KEY belum ditemukan. Isi di Streamlit Secrets atau environment variable.")
     st.stop()
 
-genai.configure(api_key=GOOGLE_API_KEY)
+if not DB_URL:
+    st.error("DB_URL belum ditemukan. Isi di Streamlit Secrets atau environment variable.")
+    st.stop()
 
 MODEL_NAME = "gemini-2.5-flash"
-model = genai.GenerativeModel(MODEL_NAME)
-
-DB_URL = os.getenv(
-    "DB_URL",
-    "postgresql+psycopg2://postgres:postgres@localhost:5432/miniproject"
-)
-
+client = genai.Client(api_key=GOOGLE_API_KEY)
 engine = create_engine(DB_URL)
 
-SCHEMA_STR = """assets(asset_id, nama, jenis, lokasi)
+SCHEMA_STR = """
+assets(asset_id, nama, jenis, lokasi)
 outages(outage_id, asset_id, mulai, selesai, durasi_menit, penyebab)
 
 Relasi:
-- outages.asset_id -> assets.asset_id
-Catatan: 'mulai' & 'selesai' berformat 'YYYY-MM-DD HH:MM'.
-         durasi_menit = lama gangguan dalam menit."""
+outages.asset_id -> assets.asset_id
+"""
 
-FORBIDDEN = ["drop", "delete", "update", "insert", "alter", "truncate", "create", "grant"]
+FORBIDDEN = [
+    "drop",
+    "delete",
+    "update",
+    "insert",
+    "alter",
+    "truncate",
+    "create",
+    "grant"
+]
 
 
 # ======================
-# 2. Pipeline Text-to-SQL
+# 2. Fungsi Pipeline
 # ======================
 def build_prompt(question: str) -> str:
     return f"""
@@ -102,12 +104,17 @@ def _bersihkan_sql(teks: str) -> str:
 
 def generate_sql(question: str) -> str:
     prompt = build_prompt(question)
-    resp = model.generate_content(prompt)
+
+    resp = client.models.generate_content(
+        model=MODEL_NAME,
+        contents=prompt
+    )
+
     return _bersihkan_sql(resp.text)
 
 
 def validate_sql(sql: str) -> bool:
-    teks = sql.strip().rstrip(";").strip()
+    teks = sql.strip()
     low = teks.lower()
 
     if not low:
@@ -179,8 +186,6 @@ def tampilkan_chart(df: pd.DataFrame):
 # ======================
 # 3. Streamlit UI
 # ======================
-st.set_page_config(page_title="Chatbot Aset & Gangguan", page_icon="⚡")
-
 st.title("⚡ Chatbot Analitik Aset & Gangguan")
 st.caption("Mini Project Conversational Analytics — Text-to-SQL")
 
@@ -194,7 +199,10 @@ for msg in st.session_state.messages:
 question = st.chat_input("Tanyakan data aset/gangguan...")
 
 if question:
-    st.session_state.messages.append({"role": "user", "content": question})
+    st.session_state.messages.append({
+        "role": "user",
+        "content": question
+    })
 
     with st.chat_message("user"):
         st.markdown(question)
@@ -205,8 +213,11 @@ if question:
 
         if error:
             st.error(error)
+
             if sql:
+                st.markdown("**SQL yang dihasilkan:**")
                 st.code(sql, language="sql")
+
             response = "Maaf, query gagal dijalankan."
 
         else:
@@ -221,6 +232,7 @@ if question:
 
             response = "Berikut hasil query dan visualisasinya."
 
-    st.session_state.messages.append({"role": "assistant", "content": response})
-
-print("TODO 8 (opsional): kerjakan jika waktu masih cukup.")
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": response
+    })
